@@ -1,0 +1,31 @@
+name: 🤖 Jobi - Vagas de Estágio
+
+on:
+  schedule:
+    # Executa às 9h, 12h, 15h e 17h de segunda a sexta (horário UTC)
+    - cron: '0 12,15,18,20 * * 1-5'
+  
+  workflow_dispatch:  # Permite executar manualmente
+
+jobs:
+  buscar-vagas:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Baixar código
+      uses: actions/checkout@v3
+    
+    - name: 🐍 Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: 📦 Instalar dependências
+      run: |
+        pip install -r requirements.txt
+    
+    - name: 🚀 Executar Bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python main.py
