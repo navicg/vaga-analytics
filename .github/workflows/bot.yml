@@ -2,8 +2,9 @@ name: 🤖 Jobi - Vagas de Estágio
 
 on:
   schedule:
-    # Executa às 9h, 12h, 15h e 17h de segunda a sexta (horário UTC)
-    - cron: '0 12,15,18,20 * * 1-5'
+    # Executa APENAS às 17h (horário de Brasília = UTC-3)
+    # 17h BRT = 20h UTC
+    - cron: '0 20 * * 1-5'
   
   workflow_dispatch:  # Permite executar manualmente
 
@@ -15,6 +16,15 @@ jobs:
     - name: 📥 Baixar código
       uses: actions/checkout@v3
     
+    - name: 💾 Restaurar histórico de vagas
+      uses: actions/cache@v3
+      with:
+        path: data/
+        key: ${{ runner.os }}-vagas-historical-${{ github.ref }}-${{ hashFiles('data/vagas_historico.csv') }}
+        restore-keys: |
+          ${{ runner.os }}-vagas-historical-${{ github.ref }}-
+          ${{ runner.os }}-vagas-historical-
+    
     - name: 🐍 Configurar Python
       uses: actions/setup-python@v4
       with:
@@ -22,6 +32,7 @@ jobs:
     
     - name: 📦 Instalar dependências
       run: |
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
     
     - name: 🚀 Executar Bot
@@ -29,3 +40,12 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
+    
+    - name: 💾 Salvar histórico de vagas
+      uses: actions/cache@v3
+      with:
+        path: data/
+        key: ${{ runner.os }}-vagas-historical-${{ github.ref }}-${{ hashFiles('data/vagas_historico.csv') }}
+        restore-keys: |
+          ${{ runner.os }}-vagas-historical-${{ github.ref }}-
+          ${{ runner.os }}-vagas-historical-

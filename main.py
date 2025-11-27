@@ -4,15 +4,31 @@ from utils.alerta_telegram import enviar_alerta
 import pandas as pd
 import os
 import datetime
+import hashlib
 
 
 def adicionar_timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def criar_identificador_unico(vaga):
-    """Cria um identificador único para cada vaga"""
-    return f"{vaga['titulo']}_{vaga['empresa']}_{vaga['local']}"
+def criar_hash_vaga(vaga):
+    """Cria um hash único baseado em todos os dados da vaga"""
+    vaga_str = f"{vaga['titulo']}{vaga['empresa']}{vaga['local']}{vaga['modalidade']}"
+    return hashlib.md5(vaga_str.encode()).hexdigest()
+
+
+def limpar_historico_antigo(df_historico, dias=7):
+    """Remove vagas com mais de X dias do histórico"""
+    if 'data_processamento' not in df_historico.columns:
+        return df_historico
+        
+    df_historico['data_processamento'] = pd.to_datetime(df_historico['data_processamento'], errors='coerce')
+    data_limite = pd.Timestamp.now() - pd.Timedelta(days=dias)
+    
+    df_limpo = df_historico[df_historico['data_processamento'] > data_limite]
+    
+    print(f"🧹 Limpeza: {len(df_historico)} -> {len(df_limpo)} vagas no histórico")
+    return df_limpo
 
 
 def main():
@@ -34,6 +50,8 @@ def main():
 
     if not df.empty:
         df['data_coleta'] = adicionar_timestamp()
+        # Adicionar hash único
+        df['hash_vaga'] = df.apply(criar_hash_vaga, axis=1)
 
     # Criar pasta /data caso não exista
     if not os.path.exists("data"):
@@ -56,53 +74,57 @@ def main():
 
     if not df_tratado_novo.empty:
         df_tratado_novo['data_processamento'] = adicionar_timestamp()
-
-    # Criar identificador único
-    df_tratado_novo['id_unico'] = df_tratado_novo.apply(criar_identificador_unico, axis=1)
+        # Manter o hash das vagas tratadas
+        df_tratado_novo['hash_vaga'] = df_tratado_novo.apply(criar_hash_vaga, axis=1)
 
     print(f"🔧 Vagas após tratamento: {len(df_tratado_novo)}")
-    print("📝 Primeiras 3 vagas tratadas:")
-    for i, vaga in df_tratado_novo.head(3).iterrows():
-        print(f"  {i+1}. {vaga['titulo']} | {vaga['fonte']}")
+    if not df_tratado_novo.empty:
+        print("📝 Primeiras 3 vagas tratadas:")
+        for i, vaga in df_tratado_novo.head(3).iterrows():
+            print(f"  {i+1}. {vaga['titulo']} | {vaga['fonte']}")
+    else:
+        print("⚠️ Nenhuma vaga após tratamento!")
+        return
 
     path_tratado = "data/vagas_tratadas.csv"
+    path_historico = "data/vagas_historico.csv"  # Novo arquivo para histórico
 
-    # --- COMPARAR COM HISTÓRICO ---
-    if os.path.exists(path_tratado):
-        df_tratado_antigo = pd.read_csv(path_tratado)
-
-        # Garantir id_unico no histórico
-        if 'id_unico' not in df_tratado_antigo.columns:
-            df_tratado_antigo['id_unico'] = df_tratado_antigo.apply(criar_identificador_unico, axis=1)
-
-        # Vagas novas = as que não existem no histórico
-        ids_antigos = set(df_tratado_antigo['id_unico'].tolist())
-        df_novas = df_tratado_novo[~df_tratado_novo['id_unico'].isin(ids_antigos)]
-
-        print(f"📊 Vagas no histórico: {len(df_tratado_antigo)}")
+    # --- SISTEMA DE HISTÓRICO MELHORADO ---
+    if os.path.exists(path_historico):
+        df_historico = pd.read_csv(path_historico)
+        print(f"📚 Histórico: {len(df_historico)} vagas já processadas")
+        
+        # Aplicar limpeza no histórico (manter só últimas 2 semanas)
+        df_historico = limpar_historico_antigo(df_historico, dias=14)
+        
+        # Verificar vagas realmente novas
+        hashes_historico = set(df_historico['hash_vaga'].tolist())
+        df_novas = df_tratado_novo[~df_tratado_novo['hash_vaga'].isin(hashes_historico)]
+        
         print(f"🆕 Vagas novas encontradas: {len(df_novas)}")
-
-        # Combinar e remover duplicatas
-        df_combinado = pd.concat([df_tratado_antigo, df_novas], ignore_index=True)
-        df_combinado = df_combinado.drop_duplicates(subset=['id_unico'], keep='first')
-
-        # Salvar
-        df_combinado.to_csv(path_tratado, index=False)
-        print(f"💾 Arquivo atualizado: {path_tratado} (total: {len(df_combinado)} vagas)")
-
+        
+        if not df_novas.empty:
+            # Adicionar novas vagas ao histórico
+            df_historico_atualizado = pd.concat([df_historico, df_novas], ignore_index=True)
+            df_historico_atualizado.to_csv(path_historico, index=False)
+            print(f"💾 Histórico atualizado: {len(df_historico_atualizado)} vagas")
+        else:
+            df_historico_atualizado = df_historico
+            
     else:
+        # Primeira execução - criar histórico
         df_novas = df_tratado_novo
-        print(f"📁 Primeira execução: {len(df_novas)} vagas")
+        df_tratado_novo.to_csv(path_historico, index=False)
+        print(f"📁 Criado histórico com {len(df_novas)} vagas")
 
-        df_tratado_novo.to_csv(path_tratado, index=False)
-        print(f"💾 Arquivo salvo: {path_tratado}")
+    # Salvar versão tratada atual (apenas para referência)
+    df_tratado_novo.to_csv(path_tratado, index=False)
 
     # --- ENVIAR PARA TELEGRAM ---
     if not df_novas.empty:
         print(f"📤 Enviando {len(df_novas)} vagas novas...")
 
         for i, vaga in df_novas.iterrows():
-
             msg = (
                 "⚡ *Nova vaga de estágio!*\n\n"
                 f"📌 *{vaga['titulo']}*\n"
